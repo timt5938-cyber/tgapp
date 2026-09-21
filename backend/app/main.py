@@ -2,9 +2,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from typing import Optional
 
 from .config import settings
 from .api.routes_studio import router as studio_router
@@ -24,9 +26,14 @@ dp.include_router(bot_router)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global bot_task
-    # Start bot polling in background
-    logger.info("Starting Telegram Bot polling...")
-    bot_task = asyncio.create_task(dp.start_polling(bot))
+    # Check if running in serverless environment (Vercel)
+    is_serverless = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+    if not is_serverless:
+        logger.info("Starting Telegram Bot polling (standalone mode)...")
+        bot_task = asyncio.create_task(dp.start_polling(bot))
+    else:
+        logger.info("Running in Serverless mode (Vercel) - bot will receive updates via Webhook (/api/webhook)")
 
     yield
 
@@ -45,6 +52,47 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "mode": "serverless" if os.environ.get("VERCEL") else "standalone"}
+
+@app.post("/api/webhook")
+async def telegram_webhook(request: Request):
+    """Processes incoming Telegram updates via Webhook on Vercel."""
+    try:
+        data = await request.json()
+        await dp.feed_raw_update(bot=bot, update=data)
+    except Exception as e:
+        logger.error("Error processing Telegram webhook update: %s", e)
+    return {"ok": True}
+
+@app.get("/api/setup-webhook")
+async def setup_webhook(webhook_url: Optional[str] = None):
+    """One-click setup of Telegram webhook to your Vercel deployment URL."""
+    target_url = webhook_url or f"{settings.MINI_APP_URL.rstrip('/')}/api/webhook"
+    if not target_url.startswith("https://"):
+        return {
+            "success": False,
+            "error": f"Telegram requires HTTPS for webhooks. Current target: {target_url}",
+            "tip": "Pass your Vercel URL: /api/setup-webhook?webhook_url=https://<your-project>.vercel.app/api/webhook or set MINI_APP_URL in Vercel environment variables."
+        }
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        res = await bot.set_webhook(url=target_url)
+        info = await bot.get_webhook_info()
+        return {
+            "success": res,
+            "webhook_url": target_url,
+            "webhook_info": {
+                "url": info.url,
+                "has_custom_certificate": info.has_custom_certificate,
+                "pending_update_count": info.pending_update_count,
+                "last_error_message": info.last_error_message
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 # Enable CORS for Telegram WebApp iframe
 app.add_middleware(

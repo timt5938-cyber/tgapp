@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
@@ -7,7 +8,7 @@ ROOT_DIR = BASE_DIR.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(ROOT_DIR / ".env"),
+        env_file=str(ROOT_DIR / ".env") if (ROOT_DIR / ".env").exists() else None,
         env_file_encoding="utf-8",
         extra="ignore"
     )
@@ -28,18 +29,22 @@ class Settings(BaseSettings):
     # Web & Mini App
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
-    MINI_APP_URL: str = "https://0b964e5fd5a417.lhr.life"
+    MINI_APP_URL: str = "http://localhost:8000"
 
     # Paths
     BASE_DIR: Path = BASE_DIR
     ROOT_DIR: Path = ROOT_DIR
-    STORAGE_DIR: Path = ROOT_DIR / "storage"
+    STORAGE_DIR: Path = Path("/tmp/storage") if os.environ.get("VERCEL") else (ROOT_DIR / "storage")
     PRESETS_DIR: Path = BASE_DIR / "static" / "presets"
     TEMPLATES_DIR: Path = BASE_DIR / "static" / "templates"
 
 settings = Settings()
 
-# Ensure directories exist
-settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-settings.PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-settings.TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+# Ensure directories exist safely
+try:
+    settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    settings.PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    settings.TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+
