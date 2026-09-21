@@ -106,8 +106,12 @@ app.add_middleware(
 # Mount API routes
 app.include_router(studio_router)
 
-# Mount static files (presets & templates)
-app.mount("/static", StaticFiles(directory=str(settings.BASE_DIR / "static")), name="static")
+# Mount static files (presets & templates) safely
+static_dir = settings.BASE_DIR / "static"
+if not static_dir.exists():
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Mount built frontend if it exists
 frontend_dist = settings.ROOT_DIR / "frontend" / "dist"
